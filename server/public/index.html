@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Paid Notes System</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react@18/umd/react.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/babel-standalone@6.26.0/babel.min.js"></script>
+  <script src="https://js.stripe.com/v3/"></script>
+</head>
+<body class="bg-gray-100">
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const App = () => {
+      // State
+      const [token, setToken] = useState('');
+      const [username, setUsername] = useState('');
+      const [password, setPassword] = useState('');
+      const [fullname, setFullname] = useState('');
+      const [notes, setNotes] = useState([]);
+      const [myNotes, setMyNotes] = useState([]);
+      const [noteForm, setNoteForm] = useState({
+        title: '', description: '', subject: '', category: '', price: ''
+      });
+      const [editNoteId, setEditNoteId] = useState(null);
+      const [filter, setFilter] = useState({ category: 'Notes', subject: '' });
+      const [buyerEmail, setBuyerEmail] = useState('');
+      const [resendEmail, setResendEmail] = useState('');
+      const [orderId, setOrderId] = useState('');
+      const [accessKey, setAccessKey] = useState('');
+      const [error, setError] = useState('');
+      const [success, setSuccess] = useState('');
+      const [isTeacher, setIsTeacher] = useState(false);
+      const [isLoggedIn, setIsLoggedIn] = useState(false);
+      const [clientSecret, setClientSecret] = useState('');
+      const [selectedNote, setSelectedNote] = useState(null);
+
+      const baseUrl = 'http://localhost:3000';
+      const stripe = Stripe('pk_test_your_stripe_publishable_key'); // Replace with Stripe test publishable key
+
+      // Clear messages after 5 seconds
+      useEffect(() => {
+        if (error || success) {
+          const timer = setTimeout(() => {
+            setError('');
+            setSuccess('');
+          }, 5000);
+          return () => clearTimeout(timer);
+        }
+      }, [error, success]);
+
+      // Fetch notes
+      const fetchNotes = async () => {
+        try {
+          const params = new URLSearchParams(filter).toString();
+          const response = await fetch(`${baseUrl}/api/paid-notes?${params}`, {
+            headers: { 'Content-Type': 'application/json' }
+          });
+          const data = await response.json();
+          console.log('Fetch notes response:', data);
+          if (data.success) {
+            setNotes(data.data);
+            setSuccess(`Fetched ${data.count} notes`);
+          } else {
+            setError(data.error || 'Failed to fetch notes');
+          }
+        } catch (err) {
+          setError('Error fetching notes: ' + err.message);
+        }
+      };
+
+      // Fetch specific note
+      const fetchNoteById = async (id) => {
+        try {
+          const response = await fetch(`${baseUrl}/api/paid-notes/${id}`, {
+            headers: { 'Content-Type': 'application/json' }
+          });
+          const data = await response.json();
+          console.log('Fetch note response:', data);
+          if (data.success) {
+            setSelectedNote(data.data);
+            setSuccess('Note details fetched');
+          } else {
+            setError(data.error || 'Failed to fetch note');
+          }
+        } catch (err) {
+          setError('Error fetching note: ' + err.message);
+        }
+      };
+
+      // Fetch teacher's notes
+      const fetchMyNotes = async () => {
+        try {
+          const response = await fetch(`${baseUrl}/api/paid-notes/teacher/my-notes`, {
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            }
+          });
+          const data = await response.json();
+          console.log('Fetch my notes response:', data);
+          if (data.success) {
+            setMyNotes(data.data);
+            setSuccess('Fetched your notes');
+          } else {
+            setError(data.error || 'Failed to fetch your notes');
+          }
+        } catch (err) {
+          setError('Error fetching your notes: ' + err.message);
+        }
+      };
+
+      // Handle registration
+      const handleRegister = async (e) => {
+        e.preventDefault();
+        try {
+          const response = await fetch(`${baseUrl}/api/auth/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, fullname, password, role: 'teacher' })
+          });
+          const data = await response.json();
+          console.log('Register response:', data);
+          if (data.success) {
+            setSuccess('Registration successful. Please log in.');
+            setUsername('');
+            setFullname('');
+            setPassword('');
+          } else {
+            setError(data.error || 'Registration failed');
+          }
+        } catch (err) {
+          setError('Error registering: ' + err.message);
+        }
+      };
+
+      // Handle login
+      const handleLogin = async (e) => {
+        e.preventDefault();
+        try {
+          const response = await fetch(`${baseUrl}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+          });
+          const data = await response.json();
+          console.log('Login response:', data);
+          if (data.success) {
+            setToken(data.data.token);
+            setIsTeacher(data.data.role === 'teacher');
+            setIsLoggedIn(true);
+            setSuccess('Login successful');
+            setUsername('');
+            setPassword('');
+            if (data.data.role === 'teacher') {
+              fetchMyNotes();
+            }
+          } else {
+            setError(data.error || 'Login failed');
+          }
+        } catch (err) {
+          setError('Error logging in: ' + err.message);
+        }
+      };
+
+      // Handle note upload or update
+      const handleNoteSubmit = async (e) => {
+        e.preventDefault();
+        const isEdit = !!editNoteId;
+        const url = isEdit ? `${baseUrl}/api/paid-notes/${editNoteId}` : `${baseUrl}/api/paid-notes`;
+        const method = isEdit ? 'PUT' : 'POST';
+        const formData = new FormData();
+        Object.keys(noteForm).forEach(key => {
+          if (key === 'file' && noteForm[key]) {
+            formData.append(key, noteForm[key]);
+          } else if (noteForm[key]) {
+            formData.append(key, noteForm[key]);
+          }
+        });
+
+        try {
+          const response = await fetch(url, {
+            method,
+            headers: { 'Authorization': `Bearer ${token}` },
+            body: formData
+          });
+          const data = await response.json();
+          console.log(`${isEdit ? 'Update' : 'Upload'} note response:`, data);
+          if (data.success) {
+            setSuccess(isEdit ? 'Note updated successfully' : 'Note uploaded successfully');
+            setNoteForm({ title: '', description: '', subject: '', category: '', price: '', file: null });
+            setEditNoteId(null);
+            fetchNotes();
+            fetchMyNotes();
+          } else {
+            setError(data.error || `Failed to ${isEdit ? 'update' : 'upload'} note`);
+          }
+        } catch (err) {
+          setError(`Error ${isEdit ? 'updating' : 'uploading'} note: ` + err.message);
+        }
+      };
+
+      // Handle note edit
+      const handleEditNote = (note) => {
+        setEditNoteId(note._id);
+        setNoteForm({
+          title: note.title,
+          description: note.description,
+          subject: note.subject,
+          category: note.category,
+          price: note.price,
+          file: null
+        });
+      };
+
+      // Handle note deactivation
+      const handleDeactivateNote = async (id) => {
+        try {
+          const response = await fetch(`${baseUrl}/api/paid-notes/${id}`, {
+            method: 'DELETE',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            }
+          });
+          const data = await response.json();
+          console.log('Deactivate note response:', data);
+          if (data.success) {
+            setSuccess('Note deactivated successfully');
+            fetchMyNotes();
+            fetchNotes();
+          } else {
+            setError(data.error || 'Failed to deactivate note');
+          }
+        } catch (err) {
+          setError('Error deactivating note: ' + err.message);
+        }
+      };
+
+      // Handle purchase initiation
+      const handlePurchase = async (noteId) => {
+        try {
+          const response = await fetch(`${baseUrl}/api/paid-notes/${noteId}/initiate-purchase`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ buyerEmail })
+          });
+          const data = await response.json();
+          console.log('Initiate purchase response:', data);
+          if (data.success) {
+            setClientSecret(data.data.clientSecret);
+            setOrderId(data.data.orderId || '');
+            setSuccess('Payment initiated. Complete payment below.');
+          } else {
+            setError(data.error || 'Failed to initiate purchase');
+          }
+        } catch (err) {
+          setError('Error initiating purchase: ' + err.message);
+        }
+      };
+
+      // Handle Stripe payment
+      const handleStripePayment = async () => {
+        if (!clientSecret) return;
+        const elements = stripe.elements({ clientSecret });
+        const paymentElement = elements.create('payment');
+        paymentElement.mount('#payment-element');
+        document.getElementById('payment-form').addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const { error } = await stripe.confirmPayment({
+            elements,
+            confirmParams: { return_url: window.location.href }
+          });
+          if (error) {
+            setError(error.message);
+          } else {
+            setSuccess('Payment successful. Check email for download link.');
+          }
+        });
+      };
+
+      // Handle note download
+      const handleDownload = async () => {
+        try {
+          const response = await fetch(`${baseUrl}/api/paid-notes/download/${orderId}/${accessKey}`);
+          console.log('Download response:', response);
+          if (response.status === 307) {
+            window.location.href = response.headers.get('Location');
+            setSuccess('Download initiated');
+          } else {
+            const data = await response.json();
+            setError(data.error || 'Failed to download note');
+          }
+        } catch (err) {
+          setError('Error downloading note: ' + err.message);
+        }
+      };
+
+      // Handle resend download link
+      const handleResendLink = async () => {
+        try {
+          const response = await fetch(`${baseUrl}/api/paid-notes/resend-link`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ buyerEmail: resendEmail, orderId })
+          });
+          const data = await response.json();
+          console.log('Resend link response:', data);
+          if (data.success) {
+            setSuccess(data.data.message || 'Download links resent');
+            setResendEmail('');
+            setOrderId('');
+          } else {
+            setError(data.error || 'Failed to resend links');
+          }
+        } catch (err) {
+          setError('Error resending links: ' + err.message);
+        }
+      };
+
+      // Fetch notes on mount and filter change
+      useEffect(() => {
+        fetchNotes();
+      }, [filter]);
+
+      // Fetch teacher's notes on login
+      useEffect(() => {
+        if (isLoggedIn && isTeacher) {
+          fetchMyNotes();
+        }
+      }, [isLoggedIn, isTeacher]);
+
+      // Initialize Stripe payment form
+      useEffect(() => {
+        if (clientSecret) {
+          handleStripePayment();
+        }
+      }, [clientSecret]);
+
+      return (
+        <div className="container mx-auto p-4">
+          <h1 className="text-3xl font-bold mb-4">Paid Notes System</h1>
+
+          {/* Authentication */}
+          {!isLoggedIn ? (
+            <div className="mb-8">
+              <h2 className="text-2xl font-semibold mb-2">Register / Login</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <form onSubmit={handleRegister} className="p-4 bg-white rounded shadow">
+                  <h3 className="text-xl font-semibold mb-2">Register as Teacher</h3>
+                  <input
+                    type="text"
+                    placeholder="Username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full p-2 mb-2 border rounded"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Full Name"
+                    value={fullname}
+                    onChange={(e) => setFullname(e.target.value)}
+                    className="w-full p-2 mb-2 border rounded"
+                  />
+                  <input
+                    type="password"
+                    placeholder="Password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full p-2 mb-2 border rounded"
+                  />
+                  <button type="submit" className="w-full p-2 bg-blue-500 text-white rounded">
+                    Register
+                  </button>
+                </form>
+                <form onSubmit={handleLogin} className="p-4 bg-white rounded shadow">
+                  <h3 className="text-xl font-semibold mb-2">Login</h3>
+                  <input
+                    type="text"
+                    placeholder="Username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full p-2 mb-2 border rounded"
+                  />
+                  <input
+                    type="password"
+                    placeholder="Password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full p-2 mb-2 border rounded"
+                  />
+                  <button type="submit" className="w-full p-2 bg-blue-500 text-white rounded">
+                    Login
+                  </button>
+                </form>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                setToken('');
+                setIsLoggedIn(false);
+                setIsTeacher(false);
+                setMyNotes([]);
+                setSuccess('Logged out successfully');
+              }}
+              className="mb-4 p-2 bg-red-500 text-white rounded"
+            >
+              Logout
+            </button>
+          )}
+
+          {/* Messages */}
+          {error && <p className="text-red-500 mb-4">{error}</p>}
+          {success && <p className="text-green-500 mb-4">{success}</p>}
+
+          {/* Teacher: Manage Notes */}
+          {isLoggedIn && isTeacher && (
+            <div className="mb-8">
+              <h2 className="text-2xl font-semibold mb-2">{editNoteId ? 'Edit Note' : 'Upload Note'}</h2>
+              <form onSubmit={handleNoteSubmit} className="p-4 bg-white rounded shadow">
+                <input
+                  type="text"
+                  placeholder="Title"
+                  value={noteForm.title}
+                  onChange={(e) => setNoteForm({ ...noteForm, title: e.target.value })}
+                  className="w-full p-2 mb-2 border rounded"
+                />
+                <textarea
+                  placeholder="Description"
+                  value={noteForm.description}
+                  onChange={(e) => setNoteForm({ ...noteForm, description: e.target.value })}
+                  className="w-full p-2 mb-2 border rounded"
+                />
+                <input
+                  type="text"
+                  placeholder="Subject"
+                  value={noteForm.subject}
+                  onChange={(e) => setNoteForm({ ...noteForm, subject: e.target.value })}
+                  className="w-full p-2 mb-2 border rounded"
+                />
+                <input
+                  type="text"
+                  placeholder="Category"
+                  value={noteForm.category}
+                  onChange={(e) => setNoteForm({ ...noteForm, category: e.target.value })}
+                  className="w-full p-2 mb-2 border rounded"
+                />
+                <input
+                  type="number"
+                  placeholder="Price"
+                  value={noteForm.price}
+                  onChange={(e) => setNoteForm({ ...noteForm, price: e.target.value })}
+                  className="w-full p-2 mb-2 border rounded"
+                />
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx,.ppt,.pptx,.jpg,.jpeg,.png,.zip"
+                  onChange={(e) => setNoteForm({ ...noteForm, file: e.target.files[0] })}
+                  className="w-full p-2 mb-2"
+                />
+                <button type="submit" className="w-full p-2 bg-blue-500 text-white rounded">
+                  {editNoteId ? 'Update Note' : 'Upload Note'}
+                </button>
+                {editNoteId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditNoteId(null);
+                      setNoteForm({ title: '', description: '', subject: '', category: '', price: '', file: null });
+                    }}
+                    className="w-full p-2 mt-2 bg-gray-500 text-white rounded"
+                  >
+                    Cancel Edit
+                  </button>
+                )}
+              </form>
+
+              <h2 className="text-2xl font-semibold mt-8 mb-2">My Notes</h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {myNotes.map(note => (
+                  <div key={note._id} className="p-4 bg-white rounded shadow">
+                    <h3 className="text-xl font-semibold">{note.title}</h3>
+                    <p>{note.description}</p>
+                    <p>Subject: {note.subject}</p>
+                    <p>Category: {note.category}</p>
+                    <p>Price: ${note.price}</p>
+                    <p>Status: {note.isActive ? 'Active' : 'Inactive'}</p>
+                    <button
+                      onClick={() => handleEditNote(note)}
+                      className="mt-2 p-2 bg-yellow-500 text-white rounded mr-2"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => handleDeactivateNote(note._id)}
+                      className="mt-2 p-2 bg-red-500 text-white rounded"
+                    >
+                      Deactivate
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Browse Notes */}
+          <div className="mb-8">
+            <h2 className="text-2xl font-semibold mb-2">Browse Notes</h2>
+            <div className="flex mb-4">
+              <input
+                type="text"
+                placeholder="Category"
+                value={filter.category}
+                onChange={(e) => setFilter({ ...filter, category: e.target.value })}
+                className="p-2 mr-2 border rounded"
+              />
+              <input
+                type="text"
+                placeholder="Subject"
+                value={filter.subject}
+                onChange={(e) => setFilter({ ...filter, subject: e.target.value })}
+                className="p-2 mr-2 border rounded"
+              />
+              <button
+                onClick={fetchNotes}
+                className="p-2 bg-blue-500 text-white rounded"
+              >
+                Filter
+              </button>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {notes.map(note => (
+                <div key={note._id} className="p-4 bg-white rounded shadow">
+                  <h3
+                    className="text-xl font-semibold cursor-pointer hover:underline"
+                    onClick={() => fetchNoteById(note._id)}
+                  >
+                    {note.title}
+                  </h3>
+                  {selectedNote && selectedNote._id === note._id && (
+                    <div className="mt-2">
+                      <p>{selectedNote.description}</p>
+                      <p>Subject: {selectedNote.subject}</p>
+                      <p>Category: {selectedNote.category}</p>
+                      <p>Price: ${selectedNote.price}</p>
+                      <input
+                        type="email"
+                        placeholder="Buyer Email"
+                        value={buyerEmail}
+                        onChange={(e) => setBuyerEmail(e.target.value)}
+                        className="w-full p-2 mb-2 border rounded"
+                      />
+                      <button
+                        onClick={() => handlePurchase(note._id)}
+                        className="mt-2 p-2 bg-green-500 text-white rounded"
+                      >
+                        Buy Now
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Stripe Payment Form */}
+          {clientSecret && (
+            <div className="mb-8 p-4 bg-white rounded shadow">
+              <h2 className="text-2xl font-semibold mb-2">Complete Payment</h2>
+              <div id="payment-form">
+                <div id="payment-element"></div>
+                <button type="submit" className="mt-2 p-2 bg-blue-500 text-white rounded">
+                  Pay Now
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Download Note */}
+          <div className="mb-8 p-4 bg-white rounded shadow">
+            <h2 className="text-2xl font-semibold mb-2">Download Note</h2>
+            <input
+              type="text"
+              placeholder="Order ID"
+              value={orderId}
+              onChange={(e) => setOrderId(e.target.value)}
+              className="w-full p-2 mb-2 border rounded"
+            />
+            <input
+              type="text"
+              placeholder="Access Key"
+              value={accessKey}
+              onChange={(e) => setAccessKey(e.target.value)}
+              className="w-full p-2 mb-2 border rounded"
+            />
+            <button
+              onClick={handleDownload}
+              className="w-full p-2 bg-blue-500 text-white rounded"
+            >
+              Download
+            </button>
+          </div>
+
+          {/* Resend Download Link */}
+          <div className="mb-8 p-4 bg-white rounded shadow">
+            <h2 className="text-2xl font-semibold mb-2">Resend Download Link</h2>
+            <input
+              type="email"
+              placeholder="Buyer Email"
+              value={resendEmail}
+              onChange={(e) => setResendEmail(e.target.value)}
+              className="w-full p-2 mb-2 border rounded"
+            />
+            <input
+              type="text"
+              placeholder="Order ID (optional)"
+              value={orderId}
+              onChange={(e) => setOrderId(e.target.value)}
+              className="w-full p-2 mb-2 border rounded"
+            />
+            <button
+              onClick={handleResendLink}
+              className="w-full p-2 bg-blue-500 text-white rounded"
+            >
+              Resend Link
+            </button>
+          </div>
+        </div>
+      );
+    };
+
+    ReactDOM.render(<App />, document.getElementById('root'));
+  </script>
+</body>
+</html>
