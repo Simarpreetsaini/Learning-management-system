@@ -1,5 +1,7 @@
 # 📚 Learning Management System (LMS)
 
+![BRS-LMS Thumbnail](https://learning-management-system-ashen-nine.vercel.app/thumbnail.png)
+
 A modern and responsive **Learning Management System** built to provide a seamless online learning experience for students, instructors, and administrators. This platform enables course management, content delivery, student enrollment, and progress tracking in one centralized system.
 
 ## 🚀 Features
